@@ -1,6 +1,9 @@
 // # Generated Source File
 #include "JavaScriptBindings.h"
+#include "JavaScriptComponent.h"
+#include "JavaScriptDummy.h"
 #include "../Core/Context.h"
+#include "../Core/ObjectReflection.h"
 #include "../IO/Log.h"
 #include "../Resource/ResourceCache.h"
 #include "../Resource/Resource.h"
@@ -13,11 +16,13 @@
 
 #define OBJECT_PTR_PROP DUK_HIDDEN_SYMBOL("__ptr")
 #define OBJECT_TYPE_PROP DUK_HIDDEN_SYMBOL("__type")
+#define OBJECT_COMPONENT_PROP DUK_HIDDEN_SYMBOL("__ccall")
 #define EVENT_CALLBACK_ID_PROP DUK_HIDDEN_SYMBOL("__eventid")
 
 namespace Urho3D {
     ea::vector<SharedPtr<JavaScriptEventHandle>> gEventHandles_;
     ea::queue<unsigned> gAvailableEventIds_;
+    ea::unordered_map<StringHash, ea::shared_ptr<TypeInfo>> gRegisteredComponents_;
 
     duk_context* JavaScriptBindings::dukCtx_ = nullptr;
     Context* JavaScriptBindings::rbfxCtx_ = nullptr;
@@ -172,6 +177,112 @@ namespace Urho3D {
             duk_del_prop_index(ctx, -1, id);
             duk_pop(ctx);
         }
+    }
+
+
+    SharedPtr<Object> Ctor_Component(const TypeInfo* type, Context* context) {
+        return SharedPtr<JavaScriptComponent>(new JavaScriptComponent(context, const_cast<TypeInfo*>(type)));
+    }
+    void Call_RegisterComponent(duk_context* ctx, duk_idx_t ctor_idx, const char* category, const char* typeName) {
+        URHO3D_ASSERTLOG(category, "Category cannot be empty.");
+        URHO3D_ASSERTLOG(typeName, "Typename cannot be empty.");
+
+        {
+            unsigned typeLen = strlen(typeName);
+            for (unsigned i = 0; i < typeLen; ++i) {
+                char c = typeName[i];
+                URHO3D_ASSERTLOG(
+                    (c >= 48 && c <= 57 && i > 0) ||
+                    (c >= 65 && c <= 90) ||
+                    (c >= 97 && c <= 122) ||
+                    c == '_',
+                    "Invalid Type name for this component"
+                );
+            }
+        }
+
+        StringHash typeHash = typeName;
+        Context* engineCtx = JavaScriptBindings::GetContext();
+
+        auto typeIt = gRegisteredComponents_.find(typeHash);
+        // Remove registered type
+        if (typeIt != gRegisteredComponents_.end()) {
+            if (engineCtx->IsReflected(typeHash))
+                engineCtx->RemoveReflection(typeHash);
+            gRegisteredComponents_.erase(typeIt);
+        }
+        else {
+            // We don't want that user overwrites system types.
+            URHO3D_ASSERTLOG(!engineCtx->IsReflected(typeName), Format("{} is a engine registered type, its not possible to change or overwrite.", typeName));
+        }
+
+        ea::shared_ptr<TypeInfo> typeInfo = ea::make_shared<TypeInfo>(typeName, Component::GetTypeInfoStatic());
+
+        JavaScriptDummy::SetTypeInfoStatic(typeInfo.get());
+        ObjectReflection* objReflection = engineCtx->AddFactoryReflection<JavaScriptDummy>(Format("Components/{}", category));
+
+        objReflection->SetObjectFactory(Ctor_Component);
+
+        gRegisteredComponents_[typeHash] = typeInfo;
+
+        // Delete object from global if has been registered.
+        if (duk_get_global_string(ctx, typeName)) {
+            duk_pop(ctx);
+            duk_push_global_object(ctx);
+            duk_del_prop_string(ctx, -1, typeName);
+            duk_pop(ctx);
+        }
+
+        // Add to global JS Component
+        duk_push_c_function(ctx, [](duk_context* ctx) {
+            if (!duk_is_constructor_call(ctx)) {
+				URHO3D_LOGERROR("Invalid Constructor Call. Must call with 'new' keyword.");
+				return DUK_RET_TYPE_ERROR;
+			}
+
+            duk_push_current_function(ctx);
+            duk_get_prop_string(ctx, -1, OBJECT_TYPE_PROP);
+            const char* typeName = duk_get_string(ctx, -1);
+            duk_pop_2(ctx);
+
+            duk_idx_t argc = duk_get_top(ctx);
+            SharedPtr<Object> instance;
+
+            if(argc > 1) {
+				URHO3D_LOGERROR("Invalid Constructor Call for Type Text.");
+				return DUK_RET_TYPE_ERROR;
+			}
+
+            if (argc == 1) {
+                instance = static_cast<Object*>(duk_require_pointer(ctx, 0));
+            }
+            else {
+                instance = JavaScriptBindings::GetContext()->CreateObject(typeName);
+            }
+
+
+            instance->AddRef();
+
+            duk_push_this(ctx);
+            Object_Ctor(ctx, argc, instance);
+            Object_Finalizer(ctx, argc, instance);
+
+            // now execute js constructor provided by the register
+            duk_push_current_function(ctx);
+            duk_get_prop_string(ctx, -1, OBJECT_COMPONENT_PROP);
+            duk_push_this(ctx);
+            duk_call_method(ctx, 0);
+
+            // return this
+            duk_push_this(ctx);
+            return 1;
+        }, DUK_VARARGS);
+
+        duk_push_string(ctx, typeName);
+        duk_put_prop_string(ctx, -2, OBJECT_TYPE_PROP);
+        duk_dup(ctx, ctor_idx);
+        duk_put_prop_string(ctx, -2, OBJECT_COMPONENT_PROP);
+        duk_put_global_string(ctx, typeName);
     }
 
     void Console_Print(duk_context* ctx, unsigned argc, LogLevel logLvl) {

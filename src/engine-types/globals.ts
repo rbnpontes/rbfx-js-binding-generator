@@ -1,5 +1,5 @@
 import CodeBuilder from "../code-builder";
-import { addHeaders, addMethod, addObject, makeDynamic, setMethodArgs, setMethodCode, setMethodReturn, useGlobal } from "../metadata";
+import { addHeaders, addMethod, addObject, makeDynamic, setMethodArgs, setMethodCode, setMethodReturn, sharedPtr, useGlobal } from "../metadata";
 
 type LogLevel ='LOG_DEBUG'| 'LOG_INFO' | 'LOG_WARNING' | 'LOG_ERROR';
 function emitLogCode(logLvl : LogLevel) {
@@ -25,6 +25,17 @@ export default function defineGlobals() {
                 }, logMethod);
             });
         }, 'console');
+        addObject(()=> {
+            addMethod(()=> {
+                setMethodArgs(['StringHash']);
+                setMethodReturn(sharedPtr('Object'));
+                setMethodCode('result = JavaScriptBindings::GetContext()->CreateObject(arg0);')
+            }, 'createObject');
+            addMethod(()=> {
+                setMethodArgs(['function', 'string', 'string']);
+                setMethodCode('Call_RegisterComponent(ctx, arg0, arg1, arg2);');
+            }, 'registerComponent');
+        }, 'Reflection');
         addMethod(()=> {
             setMethodArgs(['StringHash']);
             setMethodCode('result = JavaScriptBindings::GetContext()->GetSubsystem(arg0);');
