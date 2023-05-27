@@ -183,8 +183,7 @@ namespace Urho3D {
     SharedPtr<Object> Ctor_Component(const TypeInfo* type, Context* context) {
         return SharedPtr<JavaScriptComponent>(new JavaScriptComponent(context, const_cast<TypeInfo*>(type)));
     }
-    void Call_RegisterComponent(duk_context* ctx, duk_idx_t ctor_idx, const char* category, const char* typeName) {
-        URHO3D_ASSERTLOG(category, "Category cannot be empty.");
+    void Call_RegisterComponent(duk_context* ctx, duk_idx_t ctor_idx, const char* typeName) {
         URHO3D_ASSERTLOG(typeName, "Typename cannot be empty.");
 
         {
@@ -219,7 +218,7 @@ namespace Urho3D {
         ea::shared_ptr<TypeInfo> typeInfo = ea::make_shared<TypeInfo>(typeName, Component::GetTypeInfoStatic());
 
         JavaScriptDummy::SetTypeInfoStatic(typeInfo.get());
-        ObjectReflection* objReflection = engineCtx->AddFactoryReflection<JavaScriptDummy>(Format("Components/{}", category));
+        ObjectReflection* objReflection = engineCtx->AddFactoryReflection<JavaScriptDummy>("Component/JavaScript");
 
         objReflection->SetObjectFactory(Ctor_Component);
 

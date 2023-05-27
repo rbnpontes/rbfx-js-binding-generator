@@ -32,8 +32,8 @@ export default function defineGlobals() {
                 setMethodCode('result = JavaScriptBindings::GetContext()->CreateObject(arg0);')
             }, 'createObject');
             addMethod(()=> {
-                setMethodArgs(['function', 'string', 'string']);
-                setMethodCode('Call_RegisterComponent(ctx, arg0, arg1, arg2);');
+                setMethodArgs(['function', 'string']);
+                setMethodCode('Call_RegisterComponent(ctx, arg0, arg1);');
             }, 'registerComponent');
         }, 'Reflection');
         addMethod(()=> {

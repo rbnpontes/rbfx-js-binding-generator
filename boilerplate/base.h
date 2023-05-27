@@ -33,7 +33,7 @@ namespace Urho3D {
     void Register_Event(duk_context* ctx, duk_idx_t callback_idx, StringHash eventType);
     void Remove_Event(duk_context* ctx, duk_idx_t callback_idx, StringHash eventType);
 
-    void Call_RegisterComponent(duk_context* context, duk_idx_t ctor_idx, const char* category, const char* typeName);
+    void Call_RegisterComponent(duk_context* context, duk_idx_t ctor_idx, const char* typeName);
     void Console_Print(duk_context* ctx, unsigned argc, LogLevel logLvl);
     void Wrap_Object(duk_context* ctx, Object* instance);
     void Setup_Primitive(duk_context* ctx, duk_idx_t obj_idx, const char* primitiveTypeName);
