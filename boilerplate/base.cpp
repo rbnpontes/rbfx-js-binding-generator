@@ -16,8 +16,11 @@
 
 #define OBJECT_PTR_PROP DUK_HIDDEN_SYMBOL("__ptr")
 #define OBJECT_TYPE_PROP DUK_HIDDEN_SYMBOL("__type")
+#define OBJECT_HEAPPTR_PROP DUK_HIDDEN_SYMBOL("__heapptr")
 #define OBJECT_COMPONENT_PROP DUK_HIDDEN_SYMBOL("__ccall")
 #define EVENT_CALLBACK_ID_PROP DUK_HIDDEN_SYMBOL("__eventid")
+
+#define STASH_COMPONENT_PROP "components"
 
 namespace Urho3D {
     ea::vector<SharedPtr<JavaScriptEventHandle>> gEventHandles_;
@@ -179,7 +182,29 @@ namespace Urho3D {
         }
     }
 
+    void SetComponent_Finalizer(duk_context* ctx, duk_idx_t this_idx, Component* instance, void* heapptr) {
+        duk_push_c_function(ctx, [](duk_context* ctx) {
+            duk_push_current_function(ctx);
+            duk_get_prop_string(ctx, -1, OBJECT_PTR_PROP);
 
+            void* ptr = duk_get_pointer_default(ctx, -1, nullptr);
+            if (ptr) {
+                Component* obj = static_cast<Component*>(ptr);
+                obj->ReleaseRef();
+            }
+            duk_pop(ctx);
+
+            duk_get_prop_string(ctx, -1, OBJECT_HEAPPTR_PROP);
+            Unlock_HeapPtr(ctx, duk_get_pointer_default(ctx, -1, nullptr));
+
+            return 0;
+        }, 1);
+        duk_push_pointer(ctx, instance);
+        duk_put_prop_string(ctx, -2, OBJECT_PTR_PROP);
+        duk_push_pointer(ctx, heapptr);
+        duk_put_prop_string(ctx, -2, OBJECT_HEAPPTR_PROP);
+        duk_set_finalizer(ctx, this_idx);
+    }
     SharedPtr<Object> Ctor_Component(const TypeInfo* type, Context* context) {
         return SharedPtr<JavaScriptComponent>(new JavaScriptComponent(context, const_cast<TypeInfo*>(type)));
     }
@@ -245,32 +270,45 @@ namespace Urho3D {
             duk_pop_2(ctx);
 
             duk_idx_t argc = duk_get_top(ctx);
-            SharedPtr<Object> instance;
+            SharedPtr<JavaScriptComponent> instance;
 
             if(argc > 1) {
 				URHO3D_LOGERROR("Invalid Constructor Call for Type Text.");
 				return DUK_RET_TYPE_ERROR;
 			}
 
-            if (argc == 1) {
-                instance = static_cast<Object*>(duk_require_pointer(ctx, 0));
-            }
+            if (argc == 1)
+                instance = static_cast<JavaScriptComponent*>(duk_require_pointer(ctx, 0));
             else {
-                instance = JavaScriptBindings::GetContext()->CreateObject(typeName);
+                instance = StaticCast<JavaScriptComponent>(JavaScriptBindings::GetContext()->CreateObject(typeName));
             }
-
 
             instance->AddRef();
 
             duk_push_this(ctx);
-            Object_Ctor(ctx, argc, instance);
-            Object_Finalizer(ctx, argc, instance);
 
-            // now execute js constructor provided by the register
-            duk_push_current_function(ctx);
+            // acquire js script constructor callback from stash and add to push instance
+            duk_push_global_stash(ctx);
             duk_get_prop_string(ctx, -1, OBJECT_COMPONENT_PROP);
+            duk_get_prop_string(ctx, -1, typeName);
+            duk_put_prop_string(ctx, -4, OBJECT_COMPONENT_PROP);
+            duk_pop_2(ctx);
+
+            // insert heapptr to heap pointers table
+            void* heapptr = duk_get_heapptr(ctx, argc);
+            Lock_HeapPtr(ctx, heapptr);
+
+            if (argc == 0)
+                instance->SetHeapPointer(heapptr);
+
+            Component_Ctor(ctx, argc, instance);
+            SetComponent_Finalizer(ctx, argc, instance, heapptr);
+
+            instance->SetupBindings(ctx);
+            // execute js script constructor callback
             duk_push_this(ctx);
-            duk_call_method(ctx, 0);
+            duk_push_string(ctx, OBJECT_COMPONENT_PROP);
+            duk_call_prop(ctx, -2, 0);
 
             // return this
             duk_push_this(ctx);
@@ -279,9 +317,74 @@ namespace Urho3D {
 
         duk_push_string(ctx, typeName);
         duk_put_prop_string(ctx, -2, OBJECT_TYPE_PROP);
-        duk_dup(ctx, ctor_idx);
-        duk_put_prop_string(ctx, -2, OBJECT_COMPONENT_PROP);
         duk_put_global_string(ctx, typeName);
+
+        // store constructor constructor into global stash
+        duk_push_global_stash(ctx);
+        if (!duk_get_global_string(ctx, OBJECT_COMPONENT_PROP)) {
+            duk_pop(ctx);
+            duk_push_object(ctx);
+            duk_dup(ctx, -1);
+            duk_put_prop_string(ctx, -3, OBJECT_COMPONENT_PROP);
+        }
+
+        duk_dup(ctx, ctor_idx);
+        duk_put_prop_string(ctx, -2, typeName);
+        duk_pop(ctx);
+    }
+
+    void Lock_HeapPtr(duk_context* ctx, void* heapptr) {
+        if (!heapptr) return;
+
+        duk_push_global_stash(ctx);
+        if(!duk_get_prop_string(ctx, -1, OBJECT_HEAPPTR_PROP)){
+            duk_pop(ctx);
+
+            duk_push_object(ctx);
+            duk_dup(ctx, -1);
+            duk_put_prop_string(ctx, -3, OBJECT_HEAPPTR_PROP);
+        }
+
+        duk_push_pointer(ctx, heapptr);
+        duk_put_prop_index(ctx, -2, reinterpret_cast<duk_uarridx_t>(heapptr));
+        duk_pop_2(ctx);
+    }
+    void Unlock_HeapPtr(duk_context* ctx, void* heapptr) {
+        if (!heapptr) return;
+
+        duk_push_global_stash(ctx);        
+        if (!duk_get_prop_string(ctx, -1, OBJECT_HEAPPTR_PROP)) {
+            duk_pop_2(ctx);
+            return;
+        }
+
+        duk_uarridx_t idx = reinterpret_cast<duk_uarridx_t>(heapptr);
+        if (!duk_get_prop_index(ctx, -1, idx)) {
+            duk_pop_3(ctx);
+            return;
+        }
+        duk_pop(ctx);
+
+        duk_del_prop_index(ctx, -1, idx);
+        duk_pop_2(ctx);
+    }
+    duk_bool_t Push_HeapPtr(duk_context* ctx, void* heapptr) {
+        if (!heapptr) return false;
+
+        duk_push_global_stash(ctx);
+
+        if (!duk_get_prop_string(ctx, -1, OBJECT_HEAPPTR_PROP)) {
+            duk_pop_2(ctx);
+            return false;
+        }
+
+        if (!duk_get_prop_index(ctx, -1, reinterpret_cast<duk_uarridx_t>(heapptr))) {
+            duk_pop_3(ctx);
+            return false;
+        }
+
+        duk_push_heapptr(ctx, heapptr);
+        return true;
     }
 
     void Console_Print(duk_context* ctx, unsigned argc, LogLevel logLvl) {

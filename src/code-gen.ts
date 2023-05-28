@@ -1,20 +1,20 @@
-import fs, { access, stat } from 'fs';
-import path from 'path';
 import SystemState from './system-state';
 import CodeBuilder from './code-builder';
 import { getClasses, getEnums, getGlobalObject, getHeaders, getPrimitives, getTypeToken } from './metadata';
 import { IClassToken, IEnumeratorToken, IListToken, IObjectToken, IPrimitiveToken, ITypeToken, OperatorFlags } from './types/metadata-def';
 import CodeUtils from './utils/code.utils';
+import BoilerplateUtils from './utils/boilerplate-utils';
+import FileBuild from './file-build';
 export default class CodeGen {
     public static build() {
-        const baseHeader = fs.readFileSync(path.join(SystemState.boilerplatePath, 'base.h')).toString();
-        const baseSource = fs.readFileSync(path.join(SystemState.boilerplatePath, 'base.cpp')).toString().replace('%OUTPUT_NAME%', SystemState.outputName);
         const headers = getHeaders().map(x => `#include "${x}"`).join('\n');
 
-        if (!fs.existsSync(SystemState.outputPath))
-            fs.mkdirSync(SystemState.outputPath);
-        fs.writeFileSync(path.join(SystemState.outputPath, 'JavaScriptBindings.h'), baseHeader);
-        fs.writeFileSync(path.join(SystemState.outputPath, 'JavaScriptBindings.cpp'), baseSource);
+        let codeInputs : [string, string][] = [
+            ['JavaScriptBindings.h', BoilerplateUtils.loadHeader('base')],
+            ['JavaScriptBindings.cpp', BoilerplateUtils.loadSource('base').replace('%OUTPUT_NAME%', SystemState.outputName)],
+            ['JavaScriptBindingUtils.h', BoilerplateUtils.loadHeader('utils')],
+            ['JavaScriptBindingUtils.cpp', BoilerplateUtils.loadSource('utils')]
+        ];
 
         const code = new CodeBuilder();
         const scopeCode = new CodeBuilder();
@@ -36,7 +36,11 @@ export default class CodeGen {
         ]);
 
         // Create Header File
-        fs.writeFileSync(path.join(SystemState.outputPath, SystemState.outputName + '.h'), code.toString());
+        codeInputs = [
+            ...codeInputs,
+            [SystemState.outputName+'.h', code.toString()]
+        ];
+        
         code.clear();
         scopeCode.clear();
 
@@ -63,7 +67,12 @@ export default class CodeGen {
             '}'
         ]);
 
-        fs.writeFileSync(path.join(SystemState.outputPath, SystemState.outputName + '.cpp'), code.toString());
+        codeInputs = [
+            ...codeInputs,
+            [SystemState.outputName+'.cpp', code.toString()]
+        ];
+    
+        FileBuild.build(codeInputs);
     }
 
     private static _emitGlobalDefs(code: CodeBuilder) {
