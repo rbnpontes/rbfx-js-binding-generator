@@ -9,7 +9,7 @@ export default class CodeGen {
     public static build() {
         const headers = getHeaders().map(x => `#include "${x}"`).join('\n');
 
-        let codeInputs : [string, string][] = [
+        let codeInputs: [string, string][] = [
             ['JavaScriptBindings.h', BoilerplateUtils.loadHeader('base')],
             ['JavaScriptBindings.cpp', BoilerplateUtils.loadSource('base').replace('%OUTPUT_NAME%', SystemState.outputName)],
             ['JavaScriptBindingUtils.h', BoilerplateUtils.loadHeader('utils')],
@@ -38,9 +38,9 @@ export default class CodeGen {
         // Create Header File
         codeInputs = [
             ...codeInputs,
-            [SystemState.outputName+'.h', code.toString()]
+            [SystemState.outputName + '.h', code.toString()]
         ];
-        
+
         code.clear();
         scopeCode.clear();
 
@@ -58,6 +58,7 @@ export default class CodeGen {
         code.add([
             '// # Generated File',
             `#include "${SystemState.outputName}.h"`,
+            '#include "JavaScriptBindingUtils.h"',
             '',
             'namespace Urho3D {',
             scopeCode,
@@ -69,9 +70,9 @@ export default class CodeGen {
 
         codeInputs = [
             ...codeInputs,
-            [SystemState.outputName+'.cpp', code.toString()]
+            [SystemState.outputName + '.cpp', code.toString()]
         ];
-    
+
         FileBuild.build(codeInputs);
     }
 
@@ -200,7 +201,7 @@ export default class CodeGen {
         const classes = getClasses();
 
         classes.forEach(klass => {
-            code.add(`void ${klass.name}_Ctor(duk_context* ctx, duk_idx_t obj_idx, Object* instance);`)
+            code.add(`void ${klass.name}_${SystemState.patterns.constructor}(duk_context* ctx, duk_idx_t obj_idx, Object* instance);`)
         });
     }
     private static _emitConstructorsMethods(code: CodeBuilder) {
@@ -211,14 +212,14 @@ export default class CodeGen {
             scopeCode.setIndentationSize(SystemState.indentSize);
 
             if (klass.inherits)
-                scopeCode.add(`${klass.inherits.name}_Ctor(ctx, obj_idx, instance);`);
+                scopeCode.add(`${klass.inherits.name}_${SystemState.patterns.constructor}(ctx, obj_idx, instance);`);
             else
-                scopeCode.add('Object_Ctor(ctx, obj_idx, instance);');
+                scopeCode.add(`Object_${SystemState.patterns.constructor}(ctx, obj_idx, instance);`);
 
             this._emitConstructorProperties(klass, scopeCode);
             this._emitClassMethods(klass, scopeCode);
             code.add([
-                `void ${klass.name}_Ctor(duk_context* ctx, duk_idx_t obj_idx, Object* instance) {`,
+                `void ${klass.name}_${SystemState.patterns.constructor}(duk_context* ctx, duk_idx_t obj_idx, Object* instance) {`,
                 scopeCode,
                 '}'
             ]);
@@ -253,7 +254,7 @@ export default class CodeGen {
                 '\treturn DUK_RET_ERROR;',
                 '}',
                 'instance->AddRef();',
-                `${klass.name}_Ctor(ctx, obj_idx, instance);`,
+                `${klass.name}_${SystemState.patterns.constructor}(ctx, obj_idx, instance);`,
                 '// Setup Destructor',
                 'Object_Finalizer(ctx, obj_idx, instance);',
                 '// Return this element',
@@ -417,9 +418,9 @@ export default class CodeGen {
     private static _emitPrimitiveSignatures(code: CodeBuilder) {
         code.add('// Primitive Calls');
         getPrimitives().filter(x => !x.builtin).forEach(primitive => {
-            code.add(`void ${primitive.name}_Ctor(duk_context* ctx, duk_idx_t obj_idx, const ${primitive.name}& instance);`);
-            code.add(`void ${primitive.name}_Resolve(duk_context* ctx, duk_idx_t obj_idx, ${primitive.name}& output);`);
-            code.add(`void ${primitive.name}_Require(duk_context* ctx, duk_idx_t obj_idx);`);
+            code.add(`void ${primitive.name}_${SystemState.patterns.constructor}(duk_context* ctx, duk_idx_t obj_idx, const ${primitive.name}& instance);`);
+            code.add(`${primitive.name} ${primitive.name}_${SystemState.patterns.resolver}(duk_context* ctx, duk_idx_t obj_idx);`);
+            code.add(`void ${primitive.name}_${SystemState.patterns.require}(duk_context* ctx, duk_idx_t obj_idx);`);
         });
     }
     private static _emitPrimitivesCall(code: CodeBuilder) {
@@ -459,10 +460,8 @@ export default class CodeGen {
 
                     opScope.add([
                         'duk_push_this(ctx);',
-                        `${primitive.name} value;`,
-                        `${primitive.name} instance;`,
-                        `${primitive.name}_Resolve(ctx, 0, value);`,
-                        `${primitive.name}_Resolve(ctx, 1, instance);`,
+                        `${primitive.name} value = ${primitive.name}_${SystemState.patterns.resolver}(ctx, 0);`,
+                        `${primitive.name} instance = ${primitive.name}_${SystemState.patterns.resolver}(ctx, 1);`,
                         '',
                     ]);
 
@@ -494,7 +493,7 @@ export default class CodeGen {
                 this._emitPrimitiveMethods(primitive, scopeCode);
 
                 code.add([
-                    `void ${primitive.name}_Ctor(duk_context* ctx, duk_idx_t obj_idx, const ${primitive.name}& instance) {`,
+                    `void ${primitive.name}_${SystemState.patterns.constructor}(duk_context* ctx, duk_idx_t obj_idx, const ${primitive.name}& instance) {`,
                     scopeCode,
                     '}'
                 ]);
@@ -517,7 +516,7 @@ export default class CodeGen {
                 });
 
                 code.add([
-                    `void ${primitive.name}_Require(duk_context* ctx, duk_idx_t obj_idx) {`,
+                    `void ${primitive.name}_${SystemState.patterns.require}(duk_context* ctx, duk_idx_t obj_idx) {`,
                     scopeCode,
                     '}'
                 ]);
@@ -525,6 +524,7 @@ export default class CodeGen {
             const resolveCall = () => {
                 const scopeCode = new CodeBuilder();
                 scopeCode.setIndentationSize(SystemState.indentSize);
+                scopeCode.add(`${primitive.name} output;`);
 
                 const keys = Object.keys(primitive.variables);
 
@@ -534,8 +534,6 @@ export default class CodeGen {
 
                     const argScope = new CodeBuilder();
                     argScope.setIndentationSize(SystemState.indentSize);
-
-
 
                     argScope.add([
                         `output.${vary.nativeName} = arg0;`,
@@ -558,8 +556,12 @@ export default class CodeGen {
                 //     scopeCode.add(`output.${vary.nativeName} = arg${idx};`);
                 // });
 
+                scopeCode.add([
+                    '',
+                    'return output;'
+                ]);
                 code.add([
-                    `void ${primitive.name}_Resolve(duk_context* ctx, duk_idx_t obj_idx, ${primitive.name}& output) {`,
+                    `${primitive.name} ${primitive.name}_${SystemState.patterns.resolver}(duk_context* ctx, duk_idx_t obj_idx) {`,
                     scopeCode,
                     '}'
                 ]);
@@ -611,7 +613,7 @@ export default class CodeGen {
             scopeCode.add([
                 'duk_idx_t __push_idx = duk_get_top(ctx);',
                 'duk_push_this(ctx);',
-                `${primitive.name}_Ctor(ctx, __push_idx, instance);`,
+                `${primitive.name}_${SystemState.patterns.constructor}(ctx, __push_idx, instance);`,
                 '',
                 'return 1;'
             ]);
@@ -632,7 +634,7 @@ export default class CodeGen {
                 const staticVar = primitive.staticVariables[key];
                 staticScope.add([
                     `duk_push_object(ctx);`,
-                    `${primitive.name}_Ctor(ctx, 0, ${primitive.name}::${staticVar});`,
+                    `${primitive.name}_${SystemState.patterns.constructor}(ctx, 0, ${primitive.name}::${staticVar});`,
                     'return 1;'
                 ]);
 
@@ -655,10 +657,9 @@ export default class CodeGen {
     }
     private static _emitPrimitiveInstance(primitive: IPrimitiveToken, code: CodeBuilder) {
         code.add([
-            `${primitive.name} instance;`,
             `duk_idx_t __push_idx = duk_get_top(ctx);`,
             `duk_push_this(ctx);`,
-            `${primitive.name}_Resolve(ctx, __push_idx, instance);`,
+            `${primitive.name} instance = ${primitive.name}_${SystemState.patterns.resolver}(ctx, __push_idx);`,
             'duk_pop(ctx);'
         ]);
     }
@@ -697,12 +698,13 @@ export default class CodeGen {
             '// Acquire Current Instance',
             'duk_idx_t obj_idx = duk_get_top(ctx);',
             'duk_push_this(ctx);',
-            `${instanceType.name}* instance = static_cast<${instanceType.name}*>(JavaScriptBindings::GetObjectInstance(ctx, -1, ${instanceType.name}::GetTypeStatic()));`,
+            `${instanceType.name}* instance = static_cast<${instanceType.name}*>(get_object(ctx, -1));`,
             'duk_pop(ctx);',
         ]);
     }
     private static _emitArgsValidation(argTypes: ITypeToken[], code: CodeBuilder) {
-        code.add('// Validate Arguments');
+        if (argTypes.length > 0)
+            code.add('// Validate Arguments');
         argTypes.forEach((argType, idx) => {
             this._emitTypeValidation(argType, idx.toString(), code);
         });
@@ -715,12 +717,7 @@ export default class CodeGen {
                     code.add(`duk_require_string(ctx, ${accessor});`);
                     break;
                 case 'StringHash':
-                    code.add([
-                        `if(duk_is_string(ctx, ${accessor}))`,
-                        `\tduk_require_string(ctx, ${accessor});`,
-                        'else',
-                        `\tduk_require_uint(ctx, ${accessor});`
-                    ]);
+                    code.add(`require_string_hash(ctx, ${accessor});`);
                     break;
                 case 'bool':
                 case 'boolean':
@@ -745,12 +742,12 @@ export default class CodeGen {
                     code.add(`duk_require_function(ctx, ${accessor});`);
                     break;
                 default:
-                    code.add(`${type.name}_Require(ctx, ${accessor});`);
+                    code.add(`${type.name}_${SystemState.patterns.require}(ctx, ${accessor});`);
                     break;
             }
         }
         else if (type.type == 'class') {
-            code.add(`JavaScriptBindings::RequireType(ctx, ${accessor}, ${type.name}::GetTypeStatic());`);
+            code.add(`require_object(ctx, ${accessor}, ${type.name}::GetTypeStatic());`);
         }
         else if (type.type == 'enum') {
             const enumType = type as IEnumeratorToken;
@@ -765,7 +762,8 @@ export default class CodeGen {
     }
 
     private static _emitArgs(argTypes: ITypeToken[], code: CodeBuilder) {
-        code.add('// Setup Arguments');
+        if (argTypes.length > 0)
+            code.add('// Setup Arguments');
         argTypes.forEach((type, idx) => {
             this._emitValueRead(type, `arg${idx}`, idx.toString(), code);
         });
@@ -778,13 +776,7 @@ export default class CodeGen {
                     code.add(`const char* ${varName} = duk_get_string_default(ctx, ${accessor}, "");`)
                     break;
                 case 'StringHash':
-                    code.add([
-                        `StringHash ${varName};`,
-                        `if(duk_is_string(ctx, ${accessor}))`,
-                        `\t${varName} = duk_get_string_default(ctx, ${accessor}, "");`,
-                        `else if(duk_is_number(ctx, ${accessor}))`,
-                        `\t${varName} = StringHash(duk_get_uint_default(ctx, ${accessor}, 0u));`
-                    ]);
+                    code.add(`StringHash ${varName} = get_string_hash(ctx, ${accessor});`);
                     break;
                 case 'bool':
                 case 'boolean':
@@ -807,16 +799,13 @@ export default class CodeGen {
                     code.add(`void* ${varName} = duk_get_pointer_default(ctx, ${accessor}, nullptr);`);
                     break;
                 case 'Object':
-                    code.add(`Object* ${varName} = JavaScriptBindings::GetObjectInstance(ctx, ${accessor});`);
+                    code.add(`Object* ${varName} = get_object(ctx, ${accessor});`);
                     break;
                 case 'function':
                     code.add(`duk_idx_t ${varName} = ${accessor};`);
                     break;
                 default:
-                    code.add([
-                        `${type.name} ${varName};`,
-                        `${type.name}_Resolve(ctx, ${accessor}, ${varName});`
-                    ]);
+                    code.add(`${type.name} ${varName}= ${type.name}_${SystemState.patterns.resolver}(ctx, ${accessor});`);
                     break;
             }
         }
@@ -868,68 +857,26 @@ export default class CodeGen {
             throw `unsupported argument type: ${type.name}`;
         }
     }
-    private static _emitValueWrite(type : ITypeToken, accessor : string, code : CodeBuilder) {
-        if(type.type == 'primitive') {
-            switch (type.name) {
-                case 'string':
-                    code.add(`duk_push_string(ctx, ${accessor}.c_str());`);
-                    break;
-                case 'StringHash':
-                    code.add(`duk_push_uint(ctx, ${accessor}.Value());`);
-                    break;
-                case 'bool':
-                    code.add(`duk_push_boolean(ctx, ${accessor});`);
-                    break;
-                case 'float':
-                    code.add(`duk_push_number(ctx, (double)${accessor});`);
-                    break;
-                case 'double':
-                    code.add(`duk_push_number(ctx, ${accessor});`);
-                    break;
-                case 'int':
-                    code.add(`duk_push_int(ctx, ${accessor});`);
-                    break;
-                case 'unsigned':
-                case 'uint':
-                    code.add(`duk_push_uint(ctx, ${accessor});`);
-                    break;
-                case 'void*':
-                    code.add(`duk_push_pointer(ctx, ${accessor});`);
-                    break;
-                case 'Object':
-                    code.add(`Wrap_Object(ctx, ${accessor});`);
-                    break;
-                case 'function':
-                    throw 'function cannot be used as write value.';
-                default:
-                    code.add([
-                        `duk_idx_t ${accessor}_obj_idx = duk_get_top(ctx);`,
-                        'duk_push_object(ctx);',
-                        `${type.name}_Ctor(ctx, ${accessor}_obj_idx, ${accessor});`
-                    ]);
-                    break;
-            }
+    private static _emitValueWrite(type: ITypeToken, accessor: string, code: CodeBuilder) {
+        if (type.type == 'primitive') {
+            if (type.name == 'function')
+                throw 'function cannot be used as write value';
+            code.add(`push_variant(ctx, Variant(${accessor}));`);
         }
-        else if(type.type == 'class' || type.type == 'weak_ptr' || type.type == 'shared_ptr') {
-            // code.add([
-            //     `duk_idx_t ${accessor}_push_idx = duk_get_top(ctx);`,
-            //     'duk_push_object(ctx);',
-            //     `${type.name}_Ctor(ctx, ${accessor}_push_idx, ${accessor});`,
-            //     `${accessor}->AddRef();`
-            // ]);
-            if(type.type === 'weak_ptr')
+        else if (type.type == 'class' || type.type == 'weak_ptr' || type.type == 'shared_ptr') {
+            if (type.type === 'weak_ptr')
                 throw 'not implemented weak ptr value write.';
             else
-                code.add(`Wrap_Object(ctx, ${accessor});`);
+                code.add(`push_object(ctx, ${accessor});`);
         }
-        else if(type.type == 'enum') {
+        else if (type.type == 'enum') {
             const enumType = type as IEnumeratorToken;
             if (enumType.enumType == 'number')
                 code.add(`duk_push_int(ctx, ${accessor});`);
             else
                 code.add(`duk_push_string(ctx, ${accessor});`);
         }
-        else if(type.type == 'list') {
+        else if (type.type == 'list') {
             const listType = type as IListToken;
             const scopeLoopCode = new CodeBuilder();
             scopeLoopCode.setIndentationSize(SystemState.indentSize);
@@ -1009,6 +956,6 @@ export default class CodeGen {
         code.add('// Setup return');
         this._emitValueWrite(type, 'result', code);
         if (appendReturn)
-                code.add('return 1;');
+            code.add('return 1;');
     }
 }
