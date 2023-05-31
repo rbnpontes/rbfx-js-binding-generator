@@ -40,10 +40,6 @@ namespace Urho3D {
     void Register_Event(duk_context* ctx, duk_idx_t callback_idx, StringHash eventType);
     void Remove_Event(duk_context* ctx, duk_idx_t callback_idx, StringHash eventType);
 
-    void Lock_HeapPtr(duk_context* ctx, void* heapptr);
-    void Unlock_HeapPtr(duk_context* ctx, void* heapptr);
-    duk_bool_t Push_HeapPtr(duk_context* ctx, void* heapptr);
-
     void Call_RegisterComponent(duk_context* context, duk_idx_t ctor_idx, const char* typeName);
     void Console_Print(duk_context* ctx, unsigned argc, LogLevel logLvl);
     void Wrap_Object(duk_context* ctx, Object* instance);

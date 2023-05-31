@@ -354,4 +354,56 @@ namespace Urho3D {
             duk_dup(ctx, top - argIdx);
         duk_new(ctx, args_count);
     }
+    duk_bool_t push_safe_heapptr(duk_context* ctx, void* heapptr) {
+        if(!heapptr) return false;
+
+        duk_push_global_stash(ctx);
+        if(!duk_get_prop_string(ctx, -1, JS_OBJECT_HEAPPTR_PROP)) {
+            duk_pop_2(ctx);
+            return false;
+        }
+
+        if(!duk_get_prop_index(ctx, -1, reinterpret_cast<duk_uarridx_t>(heapptr))) {
+            duk_pop_3(ctx);
+            return false;
+        }
+
+        duk_push_heapptr(ctx, heapptr);
+        return true;
+    }
+    void lock_safe_heapptr(duk_context* ctx, void* heapptr) {
+        if(!heapptr) return;
+
+        duk_push_global_stash(ctx);
+        if(!duk_get_prop_string(ctx, -1, JS_OBJECT_HEAPPTR_PROP)) {
+            duk_pop(ctx);
+
+            duk_push_object(ctx);
+            duk_dup(ctx, -1);
+            duk_put_prop_string(ctx, -3, JS_OBJECT_HEAPPTR_PROP);
+        }
+
+        duk_push_pointer(ctx, heapptr);
+        duk_put_prop_index(ctx, -2, reinterpret_cast<duk_uarridx_t>(heapptr));
+        duk_pop_2(ctx);
+    }
+    void unlock_safe_heapptr(duk_context* ctx, void* heapptr) {
+        if(!heapptr) return;
+
+        duk_push_global_stash(ctx);        
+        if (!duk_get_prop_string(ctx, -1, JS_OBJECT_HEAPPTR_PROP)) {
+            duk_pop_2(ctx);
+            return;
+        }
+
+        duk_uarridx_t idx = reinterpret_cast<duk_uarridx_t>(heapptr);
+        if (!duk_get_prop_index(ctx, -1, idx)) {
+            duk_pop_3(ctx);
+            return;
+        }
+        duk_pop(ctx);
+
+        duk_del_prop_index(ctx, -1, idx);
+        duk_pop_2(ctx);
+    }
 }

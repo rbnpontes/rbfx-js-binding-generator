@@ -175,30 +175,25 @@ namespace Urho3D {
         }
     }
 
-    void SetComponent_Finalizer(duk_context* ctx, duk_idx_t this_idx, Component* instance, void* heapptr) {
+    void JSComponent_SetFinalizer(duk_context* ctx, duk_idx_t this_idx, JavaScriptComponent* instance) {
         duk_push_c_function(ctx, [](duk_context* ctx) {
             duk_push_current_function(ctx);
             duk_get_prop_string(ctx, -1, JS_OBJECT_PTR_PROP);
 
             void* ptr = duk_get_pointer_default(ctx, -1, nullptr);
-            if (ptr) {
-                Component* obj = static_cast<Component*>(ptr);
-                obj->ReleaseRef();
+            JavaScriptComponent* component = static_cast<JavaScriptComponent*>(ptr);
+            if (component) {
+                component->ReleaseHeapptr(ctx);
+                component->ReleaseRef();
             }
-            duk_pop(ctx);
-
-            duk_get_prop_string(ctx, -1, JS_OBJECT_HEAPPTR_PROP);
-            Unlock_HeapPtr(ctx, duk_get_pointer_default(ctx, -1, nullptr));
 
             return 0;
         }, 1);
         duk_push_pointer(ctx, instance);
         duk_put_prop_string(ctx, -2, JS_OBJECT_PTR_PROP);
-        duk_push_pointer(ctx, heapptr);
-        duk_put_prop_string(ctx, -2, JS_OBJECT_HEAPPTR_PROP);
         duk_set_finalizer(ctx, this_idx);
     }
-    SharedPtr<Object> Ctor_Component(const TypeInfo* type, Context* context) {
+    SharedPtr<Object> JSComponent_Factory(const TypeInfo* type, Context* context) {
         return SharedPtr<JavaScriptComponent>(new JavaScriptComponent(context, const_cast<TypeInfo*>(type)));
     }
     void Call_RegisterComponent(duk_context* ctx, duk_idx_t ctor_idx, const char* typeName) {
@@ -238,7 +233,7 @@ namespace Urho3D {
         JavaScriptDummy::SetTypeInfoStatic(typeInfo.get());
         ObjectReflection* objReflection = engineCtx->AddFactoryReflection<JavaScriptDummy>("Component/JavaScript");
 
-        objReflection->SetObjectFactory(Ctor_Component);
+        objReflection->SetObjectFactory(JSComponent_Factory);
 
         gRegisteredComponents_[typeHash] = typeInfo;
 
@@ -289,15 +284,15 @@ namespace Urho3D {
 
             // insert heapptr to heap pointers table
             void* heapptr = duk_get_heapptr(ctx, argc);
-            Lock_HeapPtr(ctx, heapptr);
+            lock_safe_heapptr(ctx, heapptr);
 
             if (argc == 0)
                 instance->SetHeapPointer(heapptr);
 
             Component___CTOR_PATTERN__(ctx, argc, instance);
-            SetComponent_Finalizer(ctx, argc, instance, heapptr);
+            JSComponent_SetFinalizer(ctx, argc, instance);
 
-            instance->SetupBindings(ctx);
+            instance->SetupBindings(ctx, argc);
             // execute js script constructor callback
             duk_push_this(ctx);
             duk_push_string(ctx, JS_OBJECT_COMPONENT_PROP);
@@ -324,60 +319,6 @@ namespace Urho3D {
         duk_dup(ctx, ctor_idx);
         duk_put_prop_string(ctx, -2, typeName);
         duk_pop(ctx);
-    }
-
-    void Lock_HeapPtr(duk_context* ctx, void* heapptr) {
-        if (!heapptr) return;
-
-        duk_push_global_stash(ctx);
-        if(!duk_get_prop_string(ctx, -1, JS_OBJECT_HEAPPTR_PROP)){
-            duk_pop(ctx);
-
-            duk_push_object(ctx);
-            duk_dup(ctx, -1);
-            duk_put_prop_string(ctx, -3, JS_OBJECT_HEAPPTR_PROP);
-        }
-
-        duk_push_pointer(ctx, heapptr);
-        duk_put_prop_index(ctx, -2, reinterpret_cast<duk_uarridx_t>(heapptr));
-        duk_pop_2(ctx);
-    }
-    void Unlock_HeapPtr(duk_context* ctx, void* heapptr) {
-        if (!heapptr) return;
-
-        duk_push_global_stash(ctx);        
-        if (!duk_get_prop_string(ctx, -1, JS_OBJECT_HEAPPTR_PROP)) {
-            duk_pop_2(ctx);
-            return;
-        }
-
-        duk_uarridx_t idx = reinterpret_cast<duk_uarridx_t>(heapptr);
-        if (!duk_get_prop_index(ctx, -1, idx)) {
-            duk_pop_3(ctx);
-            return;
-        }
-        duk_pop(ctx);
-
-        duk_del_prop_index(ctx, -1, idx);
-        duk_pop_2(ctx);
-    }
-    duk_bool_t Push_HeapPtr(duk_context* ctx, void* heapptr) {
-        if (!heapptr) return false;
-
-        duk_push_global_stash(ctx);
-
-        if (!duk_get_prop_string(ctx, -1, JS_OBJECT_HEAPPTR_PROP)) {
-            duk_pop_2(ctx);
-            return false;
-        }
-
-        if (!duk_get_prop_index(ctx, -1, reinterpret_cast<duk_uarridx_t>(heapptr))) {
-            duk_pop_3(ctx);
-            return false;
-        }
-
-        duk_push_heapptr(ctx, heapptr);
-        return true;
     }
 
     void Console_Print(duk_context* ctx, unsigned argc, LogLevel logLvl) {
